@@ -31,12 +31,19 @@ public class Function : IHttpFunction
     private static readonly string[] AuthScopes = ["https://analysis.windows.net/powerbi/api/.default"];
 
     /// <summary>
-    /// Logic for your function goes here.
+    /// Mimic the PowerBI service endpoint to execute DAX queries against a PowerBI dataset using XMLA endpoint.
+    /// POST https://api.powerbi.com/v1.0/myorg/datasets/{datasetId}/executeQueries
     /// </summary>
-    /// <param name="context">The HTTP context, containing the request and the response.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
     public async Task HandleAsync(HttpContext context)
     {
+
+        // Accept POST method only
+        if (!HttpMethods.IsPost(context.Request.Method))
+        {
+            context.Response.StatusCode = StatusCodes.Status501NotImplemented;
+            return;
+        }
+
 
         // The response will be in JSON format, always.
         context.Response.ContentType = "application/json";
