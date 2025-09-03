@@ -57,7 +57,7 @@ public class Function : IHttpFunction
         // - x-pbi-client-id : The client ID of the Azure AD app, can be found/created in the Azure portal under App registrations > bi-ci-powerbi-xmla-client > Overview > Application (client) ID
         // - x-pbi-client-secret : The client secret of the Azure AD app, can be found/created in the Azure portal under App registrations > bi-ci-powerbi-xmla-client > Certificates & secrets
         // - x-pbi-xmla-endpoint : The XMLA endpoint URL, can be found in the PowerBI portal under Workspace settings > License info > Connection link
-        // - x-pbi-dataset-name : The name of the semaintic model to query
+        // - x-pbi-dataset-name : The name of the semantic model to send the query against
         if (!context.Request.Headers.TryGetValue("x-pbi-tenant-id", out var tenantId))
         {
             var errorResponse = new

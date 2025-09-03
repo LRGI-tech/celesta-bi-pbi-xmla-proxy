@@ -1,6 +1,8 @@
 # celesta-bi-pbi-xmla-proxy
 
-A Google Cloud Function that acts as a proxy for Power BI XMLA endpoints, enabling secure execution of DAX queries against Power BI datasets with user impersonation capabilities.
+A Google Cloud Function that acts as a proxy for Power BI XMLA endpoints, enabling secure execution of DAX queries against Power BI datasets with Service Principale authentication and supporting user impersonation.
+
+It is primarily designed to enable RLS testing, which is otherwise not natively supported by the PowerBI service API.
 
 ## Overview
 
@@ -22,11 +24,11 @@ The `Function.cs` implements an HTTP-triggered Google Cloud Function that:
 
 ## Required Headers
 
-- `x-pbi-tenant-id`: Azure tenant ID
-- `x-pbi-client-id`: Azure AD application client ID  
-- `x-pbi-client-secret`: Azure AD application client secret
-- `x-pbi-xmla-endpoint`: Power BI workspace XMLA endpoint URL
-- `x-pbi-dataset-name`: Name of the semantic model to query
+- `x-pbi-tenant-id`: The Azure tenant ID, can be found in the Azure portal under Microsoft Entra Id > Overview > Tenant ID
+- `x-pbi-client-id`: The client ID of the Azure AD app, can be found/created in the Azure portal under App registrations > bi-ci-powerbi-xmla-client > Overview > Application (client) ID 
+- `x-pbi-client-secret`: The client secret of the Azure AD app, can be found/created in the Azure portal under App registrations > bi-ci-powerbi-xmla-client > Certificates & secrets
+- `x-pbi-xmla-endpoint`: The XMLA endpoint URL, can be found in the PowerBI portal under Workspace settings > License info > Connection link
+- `x-pbi-dataset-name`: The name of the semantic model to send the query against
 
 ## Request Body
 
