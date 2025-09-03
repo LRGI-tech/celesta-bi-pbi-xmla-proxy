@@ -114,14 +114,16 @@ public class Function : IHttpFunction
             await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
             return;
         }
+
         var body = JsonSerializer.Deserialize<Models.ExecuteQueryRequestPayload>(bodyRaw);
-        if (body?.Queries != null && body.Queries.Count > 0)
+
+        if (body?.Queries == null || body.Queries.Count == 0 || string.IsNullOrWhiteSpace(body.Queries[0]?.Query))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid body",
-                detail = "Request body must contain at least one query"
+                detail = "Request body must contain at least one Query"
             };
             await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
             return;
@@ -139,48 +141,36 @@ public class Function : IHttpFunction
             return;
         }
 
-        string impersonatedUser = body.ImpersonatedUserName;
-
         try
         {
 
-
-
             // Create connection string (without token in connection string)
-            string connectionString = $"Data Source={xmlaEndpoint};User ID=app:{clientId}@{tenantId};Password={clientSecret};Catalog={datasetName};EffectiveUserName={impersonatedUser}";
+            string connectionString = $"Data Source={xmlaEndpoint};User ID=app:{clientId}@{tenantId};Password={clientSecret};Catalog={datasetName};EffectiveUserName={body.ImpersonatedUserName};";
+
+            // Open ADOMD connection
+            using AdomdConnection connection = new(connectionString);
+            connection.Open();
 
 
-            // Step 3: Open ADOMD connection
-            using (AdomdConnection connection = new AdomdConnection(connectionString))
+
+
+            // Step 4: Execute DAX Query
+            string query = "EVALUATE DISTINCT(Domains[domain_id])";
+
+            using (AdomdCommand command = new AdomdCommand(query, connection))
             {
-                // Apply the access token manually using SessionID
-                //connection.SessionID = accessToken;
-
-                Console.WriteLine("Opening connection to XMLA endpoint...");
-                connection.Open();
-
-                // var json = JsonSerializer.Serialize(connection.Properties, new JsonSerializerOptions { WriteIndented = true , ReferenceHandler = ReferenceHandler.Preserve});
-
-                // Console.WriteLine(json);
-
-                // Step 4: Execute DAX Query
-                string query = "EVALUATE DISTINCT(Domains[domain_id])";
-
-                using (AdomdCommand command = new AdomdCommand(query, connection))
+                Console.WriteLine("Executing query...");
+                using (AdomdDataReader reader = command.ExecuteReader())
                 {
-                    Console.WriteLine("Executing query...");
-                    using (AdomdDataReader reader = command.ExecuteReader())
+                    while (reader.Read())
                     {
-                        while (reader.Read())
-                        {
-                            Console.WriteLine(reader[0]);  // Print first column (adjust as needed)
-                        }
+                        Console.WriteLine(reader[0]);  // Print first column (adjust as needed)
                     }
                 }
-
-                connection.Close();
-                Console.WriteLine("Connection closed successfully.");
             }
+
+            connection.Close();
+            Console.WriteLine("Connection closed successfully.");
         }
         catch (Exception ex)
         {
