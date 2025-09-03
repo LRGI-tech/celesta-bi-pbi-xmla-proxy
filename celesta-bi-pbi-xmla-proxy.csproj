@@ -5,7 +5,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.15.0" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.76.0" />
+    <PackageReference Include="Microsoft.Identity.Client.Broker" Version="4.76.0" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.76.0" />
+    <PackageReference Include="Google.Cloud.Functions.Framework" Version="3.0.1" />
     <PackageReference Include="Google.Cloud.Functions.Hosting" Version="3.0.1" />
-    <None Include="appsettings*.json" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.0" />
+    <PackageReference Include="Microsoft.AnalysisServices.AdomdClient" Version="19.84.1" />
   </ItemGroup>
 </Project>
