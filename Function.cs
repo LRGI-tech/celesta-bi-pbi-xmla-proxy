@@ -4,17 +4,13 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.AnalysisServices.AdomdClient;
 using System.Text.Json;
+using System.IO;
 
-namespace celesta_bi_pbi_xmla_proxy;
+namespace Celesta.Bi.Pbi.XmlaProxy;
 
 public class Function : IHttpFunction
 {
-
-
     private static readonly string[] AuthScopes = ["https://analysis.windows.net/powerbi/api/.default"];
-    private static readonly string PowerBIServerBaseURL = "powerbi://api.powerbi.com/v1.0/myorg/Celesta%20Analytics%20%5BDev%5D";
-
-    private static readonly string PowerBIDatasetName = "[CEL-007] - Payment Report (1)";
 
     /// <summary>
     /// Logic for your function goes here.
@@ -27,14 +23,14 @@ public class Function : IHttpFunction
         // The response will be in JSON format, always.
         context.Response.ContentType = "application/json";
 
-        // Configure JSON serialization options for the response.
-        var responseJSONOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true // Pretty print
-        };
-
         // Get the necessary parameters from request headers.
         // If any of these are missing, return a 400 Bad Request response
+        // Expected headers:
+        // - x-pbi-tenant-id : The Azure tenant ID, can be found in the Azure portal under Microsoft Entra Id > Overview > Tenant ID
+        // - x-pbi-client-id : The client ID of the Azure AD app, can be found/created in the Azure portal under App registrations > bi-ci-powerbi-xmla-client > Overview > Application (client) ID
+        // - x-pbi-client-secret : The client secret of the Azure AD app, can be found/created in the Azure portal under App registrations > bi-ci-powerbi-xmla-client > Certificates & secrets
+        // - x-pbi-xmla-endpoint : The XMLA endpoint URL, can be found in the PowerBI portal under Workspace settings > License info > Connection link
+        // - x-pbi-dataset-name : The name of the semaintic model to query
         if (!context.Request.Headers.TryGetValue("x-pbi-tenant-id", out var tenantId))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -43,7 +39,7 @@ public class Function : IHttpFunction
                 error = "Invalid header",
                 detail = "x-pbi-tenant-id header is required"
             };
-            
+
             await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
             return;
         }
@@ -72,24 +68,87 @@ public class Function : IHttpFunction
             return;
         }
 
-        if (!context.Request.Headers.TryGetValue("x-pbi-impersonated-upn", out var impersonatedUser))
+        if (!context.Request.Headers.TryGetValue("x-pbi-xmla-endpoint", out var xmlaEndpoint))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid header",
-                detail = "x-pbi-impersonated-upn header is required"
+                detail = "x-pbi-xmla-endpoint header is required"
             };
             await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
             return;
         }
 
+        if (!context.Request.Headers.TryGetValue("x-pbi-dataset-name", out var datasetName))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            var errorResponse = new
+            {
+                error = "Invalid header",
+                detail = "x-pbi-dataset-name header is required"
+            };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
+            return;
+        }
+        
+        string bodyRaw;
+        using (var reader = new StreamReader(context.Request.Body))
+        {
+            bodyRaw = await reader.ReadToEndAsync();
+        }
+
+        // Get the necessary parameters from request body.
+        // The body must have a JSON object with the following properties:
+        // - queries: an array of query objects with at least one "query" property containing the DAX query to execute
+        // - impersonatedUserName: the user to impersonate
+        // If any of these are missing, return a 400 Bad Request response
+        if (string.IsNullOrWhiteSpace(bodyRaw))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            var errorResponse = new
+            {
+                error = "Invalid body",
+                detail = "Request body is required"
+            };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
+            return;
+        }
+        var body = JsonSerializer.Deserialize<Models.ExecuteQueryRequestPayload>(bodyRaw);
+        if (body?.Queries != null && body.Queries.Count > 0)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            var errorResponse = new
+            {
+                error = "Invalid body",
+                detail = "Request body must contain at least one query"
+            };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(body?.ImpersonatedUserName))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            var errorResponse = new
+            {
+                error = "Invalid body",
+                detail = "Request body must contain ImpersonatedUserName"
+            };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
+            return;
+        }
+
+        string impersonatedUser = body.ImpersonatedUserName;
+
         try
         {
 
+
+
             // Create connection string (without token in connection string)
-            string connectionString = $"Data Source={PowerBIServerBaseURL};User ID=app:{clientId}@{tenantId};Password={clientSecret};Catalog={PowerBIDatasetName};EffectiveUserName={impersonatedUser}";
-            // string connectionString = $"Data Source={PowerBIServerBaseURL};Catalog={PowerBIDatasetName};EffectiveUserName={impersonatedUser}";
+            string connectionString = $"Data Source={xmlaEndpoint};User ID=app:{clientId}@{tenantId};Password={clientSecret};Catalog={datasetName};EffectiveUserName={impersonatedUser}";
+
 
             // Step 3: Open ADOMD connection
             using (AdomdConnection connection = new AdomdConnection(connectionString))
