@@ -5,8 +5,26 @@ using System.Threading.Tasks;
 using Microsoft.AnalysisServices.AdomdClient;
 using System.Text.Json;
 using System.IO;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 
 namespace Celesta.Bi.Pbi.XmlaProxy;
+
+public sealed class ExecuteQueryRequestPayload
+{
+    [Required, MinLength(1)]
+    public List<QueryItem> Queries { get; init; }
+
+    [Required, EmailAddress]
+    public string ImpersonatedUserName { get; init; }
+
+}
+
+public sealed class QueryItem
+{
+    [Required, MinLength(1)]
+    public string Query { get; init; }
+}
 
 public class Function : IHttpFunction
 {
@@ -22,6 +40,8 @@ public class Function : IHttpFunction
 
         // The response will be in JSON format, always.
         context.Response.ContentType = "application/json";
+        // By default and if any error happens, we return a 400 Bad Request response
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
 
         // Get the necessary parameters from request headers.
         // If any of these are missing, return a 400 Bad Request response
@@ -33,7 +53,6 @@ public class Function : IHttpFunction
         // - x-pbi-dataset-name : The name of the semaintic model to query
         if (!context.Request.Headers.TryGetValue("x-pbi-tenant-id", out var tenantId))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid header",
@@ -46,7 +65,6 @@ public class Function : IHttpFunction
 
         if (!context.Request.Headers.TryGetValue("x-pbi-client-id", out var clientId))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid header",
@@ -58,7 +76,6 @@ public class Function : IHttpFunction
 
         if (!context.Request.Headers.TryGetValue("x-pbi-client-secret", out var clientSecret))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid header",
@@ -70,7 +87,6 @@ public class Function : IHttpFunction
 
         if (!context.Request.Headers.TryGetValue("x-pbi-xmla-endpoint", out var xmlaEndpoint))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid header",
@@ -82,7 +98,6 @@ public class Function : IHttpFunction
 
         if (!context.Request.Headers.TryGetValue("x-pbi-dataset-name", out var datasetName))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid header",
@@ -91,7 +106,7 @@ public class Function : IHttpFunction
             await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
             return;
         }
-        
+
         string bodyRaw;
         using (var reader = new StreamReader(context.Request.Body))
         {
@@ -105,7 +120,7 @@ public class Function : IHttpFunction
         // If any of these are missing, return a 400 Bad Request response
         if (string.IsNullOrWhiteSpace(bodyRaw))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+
             var errorResponse = new
             {
                 error = "Invalid body",
@@ -115,11 +130,10 @@ public class Function : IHttpFunction
             return;
         }
 
-        var body = JsonSerializer.Deserialize<Models.ExecuteQueryRequestPayload>(bodyRaw);
+        var body = JsonSerializer.Deserialize<ExecuteQueryRequestPayload>(bodyRaw);
 
         if (body?.Queries == null || body.Queries.Count == 0 || string.IsNullOrWhiteSpace(body.Queries[0]?.Query))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid body",
@@ -131,7 +145,6 @@ public class Function : IHttpFunction
 
         if (string.IsNullOrWhiteSpace(body?.ImpersonatedUserName))
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
             var errorResponse = new
             {
                 error = "Invalid body",
@@ -141,68 +154,104 @@ public class Function : IHttpFunction
             return;
         }
 
+        // Create ADOMD connection
+        string connectionString = $"Data Source={xmlaEndpoint};User ID=app:{clientId}@{tenantId};Password={clientSecret};Catalog={datasetName};EffectiveUserName={body.ImpersonatedUserName};";
+        using AdomdConnection connection = new(connectionString);
+
         try
         {
-
-            // Create connection string (without token in connection string)
-            string connectionString = $"Data Source={xmlaEndpoint};User ID=app:{clientId}@{tenantId};Password={clientSecret};Catalog={datasetName};EffectiveUserName={body.ImpersonatedUserName};";
-
-            // Open ADOMD connection
-            using AdomdConnection connection = new(connectionString);
+            // Opening the connection to Pbi XMLA endpoint
             connection.Open();
 
+            var allGood = true;
 
-
-
-            // Step 4: Execute DAX Query
-            string query = "EVALUATE DISTINCT(Domains[domain_id])";
-
-            using (AdomdCommand command = new AdomdCommand(query, connection))
+            // Now we process the query one by one.
+            // The result object, will be return in the response body
+            // The format return matches the PowerBI executeQueries response
+            // Refer to https://learn.microsoft.com/en-us/rest/api/power-bi/datasets/execute-queries for more information
+            var results = new List<object>();
+            foreach (var queryItem in body.Queries)
             {
-                Console.WriteLine("Executing query...");
-                using (AdomdDataReader reader = command.ExecuteReader())
+                using var command = new AdomdCommand(queryItem.Query, connection);
+                try
                 {
+                    using var reader = command.ExecuteReader();
+                    var rows = new List<Dictionary<string, object>>();
+
                     while (reader.Read())
                     {
-                        Console.WriteLine(reader[0]);  // Print first column (adjust as needed)
+                        var row = new Dictionary<string, object>();
+                        for (int i = 0; i < reader.FieldCount; i++)
+                        {
+                            row[reader.GetName(i)] = reader.GetValue(i);
+                        }
+                        rows.Add(row);
                     }
+
+                    results.Add(new
+                    {
+                        tables = new[]
+                        {
+                            new { rows }
+                        }
+                    });
+                }
+                catch (AdomdErrorResponseException ex)
+                {
+                    allGood = false;
+                    results.Add(new
+                    {
+                        error = new
+                        {
+                            code = "ModelQueryExecutionError",
+                            message = ex.Message
+                        }
+                    });
+                }
+                catch (AdomdException ex)
+                {
+                    allGood = false;
+                    results.Add(new
+                    {
+                        error = new
+                        {
+                            code = "AdomdException",
+                            message = ex.Message
+                        }
+                    });
                 }
             }
 
+            // Closing the connection to Pbi XMLA endpoint
             connection.Close();
-            Console.WriteLine("Connection closed successfully.");
+
+            // The powerbi executeQueries response return 200 OK only if all queries are sucessful
+            // If any query fails, the response is 400 Bad Request
+            if (allGood)
+                context.Response.StatusCode = StatusCodes.Status200OK;
+
+            // Finally returning the response
+            var response = new
+            {
+                results
+            };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(response));
+            return;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            var errorResponse = new
+            {
+                error = "An unhandled error occurred",
+                detail = $"{ex.Message}"
+            };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(errorResponse));
+            return;
         }
-        
-        // var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
-        // var token = (await credential.GetTokenAsync(new TokenRequestContext(AuthScopes))).Token;
-        // var conn = new AdomdConnection($"Data Source={PowerBIServerBaseURL};Catalog={PowerBIDatasetName};EffectiveUserName={impersonatedUser}")
-        // {
-        //     SessionID = token
-        // };
-        // Console.WriteLine("------------------- Connection created -------------------");
-
-        // try
-        // {
-        //     conn.Open();
-        //     Console.WriteLine("------------------- Connection opened -------------------");
-        //     var cmd = new AdomdCommand("EVALUATE DISTINCT('Domains Table'[Domain id])", conn);
-        //     var reader = cmd.ExecuteReader();
-        //     Console.WriteLine("------------------- Query executed -------------------");
-        // }
-        // catch (Exception ex)
-        // {
-        //     await context.Response.WriteAsync($"Error: {ex.Message}", context.RequestAborted);
-        //     conn.Close();
-        // }
-
-        // while (reader.Read())
-        // {
-        //     Console.WriteLine("Read!!!!!!!");
-        //     await context.Response.WriteAsync($"Hello, {reader[0]}!", context.RequestAborted);
-        // }
+        finally
+        {
+            connection.Close();
+        }
     }
 }
