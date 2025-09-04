@@ -46,3 +46,16 @@ The `Function.cs` implements an HTTP-triggered Google Cloud Function that:
 ## Response Format
 
 Returns JSON responses matching the Power BI executeQueries API format, with query results organized in tables and rows structure. Handles both successful query execution and error scenarios with appropriate HTTP status codes.
+
+## Deployment on GCP
+```shell
+## Change project
+gcloud config set project YOUR_PROJECT
+
+## Change region at your convenience
+gcloud functions deploy executeQueries --gen2 --region=europe-west2 --runtime=dotnet8 --source=. --entry-point=Celesta.Bi.Pbi.XmlaProxy.Function --trigger-http
+
+## Grant access to a service account
+gcloud functions add-iam-policy-binding my-xmla-proxy --region=europe-west2 --member=serviceAccount:MY-SERVICE-ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com --role=roles/cloudfunctions.invoker
+
+```
